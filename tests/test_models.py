@@ -44,6 +44,7 @@ from statsforecast.models import (
     SimpleExponentialSmoothing,
     SimpleExponentialSmoothingOptimized,
     SklearnModel,
+    SktimeModel,
     WindowAverage,
 )
 from statsforecast.utils import AirPassengers as ap
@@ -1799,6 +1800,49 @@ class TestSklearnModel:
 
         assert repr(SklearnModel(Ridge())) == "Ridge"
         assert repr(SklearnModel(Ridge(), alias="my_ridge")) == "my_ridge"
+
+
+class TestSktimeModel:
+    """Tests for SktimeModel wrapper. Requires sktime; skipped if not installed."""
+
+    @classmethod
+    def setup_class(cls):
+        pytest.importorskip("sktime")
+        cls.h = 12
+
+    def test_sktime_model_basic(self):
+        from sktime.forecasting.theta import ThetaForecaster
+
+        model = SktimeModel(ThetaForecaster(sp=12))
+        assert_class(model, x=ap, h=self.h, skip_insample=False)
+
+    def test_sktime_model_with_conformal_intervals(self):
+        from sktime.forecasting.theta import ThetaForecaster
+
+        model = SktimeModel(
+            ThetaForecaster(sp=12),
+            prediction_intervals=ConformalIntervals(h=self.h),
+        )
+        assert_class(
+            model,
+            x=ap,
+            h=self.h,
+            skip_insample=False,
+            level=[80, 95],
+            test_forward=True,
+        )
+
+    def test_sktime_model_alias(self):
+        from sktime.forecasting.theta import ThetaForecaster
+
+        assert repr(SktimeModel(ThetaForecaster())) == "ThetaForecaster"
+        assert (
+            repr(SktimeModel(ThetaForecaster(), alias="my_theta")) == "my_theta"
+        )
+
+    def test_sktime_model_requires_forecaster(self):
+        with pytest.raises(TypeError, match="forecaster must be an sktime"):
+            SktimeModel("not a forecaster")
 
 
 class TestConstantModel:
