@@ -35,6 +35,7 @@ __all__ = [
     "GARCH",
     "ARCH",
     "SklearnModel",
+    "SktimeModel",
     "ConstantModel",
     "ZeroModel",
     "NaNModel",
@@ -6535,6 +6536,235 @@ class SklearnModel(_TS):
             if fitted:
                 se = _calculate_sigma(y - res["fitted"], y.size)
                 res = _add_fitted_pi(res=res, se=se, level=level)
+        return res
+
+
+def _sktime_forecaster_to_series(y: np.ndarray):
+    """Convert numpy array to pandas Series for sktime (RangeIndex)."""
+    import pandas as pd
+
+    return pd.Series(y, index=pd.RangeIndex(len(y)))
+
+
+def _sktime_X_to_df(X: np.ndarray, index: Optional[np.ndarray] = None):
+    """Convert numpy exogenous to pandas DataFrame for sktime."""
+    import pandas as pd
+
+    if X is None or X.size == 0:
+        return None
+    if index is not None:
+        return pd.DataFrame(X, index=index)
+    return pd.DataFrame(X, index=pd.RangeIndex(len(X)))
+
+
+def _sktime_pred_to_numpy(y_pred) -> np.ndarray:
+    """Extract 1d numpy array from sktime predict output (Series or DataFrame)."""
+    import pandas as pd
+
+    if isinstance(y_pred, pd.Series):
+        return np.asarray(y_pred).ravel()
+    if isinstance(y_pred, pd.DataFrame):
+        return np.asarray(y_pred.iloc[:, 0]).ravel()
+    return np.asarray(y_pred).ravel()
+
+
+class SktimeModel(_TS):
+    r"""sktime forecaster wrapper
+
+    Wraps any sktime forecaster (BaseForecaster) so it can be used within
+    StatsForecast. Exogenous variables are optional; pass them when your
+    sktime forecaster supports them.
+
+    Args:
+        forecaster: An sktime forecaster (e.g. ThetaForecaster, ARIMA from sktime).
+        prediction_intervals (Optional[ConformalIntervals]): Information to compute
+            conformal prediction intervals. Required for prediction intervals
+            unless the forecaster implements predict_interval/predict_quantiles.
+        alias (str, optional): Custom name of the model. If None, uses the
+            forecaster's class name.
+    """
+
+    uses_exog = False  # optional; we pass X when provided
+
+    def __init__(
+        self,
+        forecaster,
+        prediction_intervals: Optional[ConformalIntervals] = None,
+        alias: Optional[str] = None,
+    ):
+        try:
+            from sktime.forecasting.base import BaseForecaster
+        except ImportError as e:
+            raise ImportError(
+                "sktime is required for SktimeModel. Install it with: pip install sktime"
+            ) from e
+        if not isinstance(forecaster, BaseForecaster):
+            raise TypeError(
+                "forecaster must be an sktime BaseForecaster instance, "
+                f"got {type(forecaster).__name__}"
+            )
+        self.forecaster = forecaster
+        self.prediction_intervals = prediction_intervals
+        self.alias = alias if alias is not None else forecaster.__class__.__name__
+
+    def _fit(self, y: np.ndarray, X: Optional[np.ndarray] = None):
+        """Fit the cloned forecaster; returns (forecaster, y_series, X_fit)."""
+        from sktime.base import clone
+
+        y_series = _sktime_forecaster_to_series(y)
+        X_fit = _sktime_X_to_df(X, index=y_series.index)
+        f = clone(self.forecaster)
+        f.fit(y_series, X=X_fit)
+        return f, y_series, X_fit
+
+    def fit(
+        self,
+        y: np.ndarray,
+        X: Optional[np.ndarray] = None,
+    ) -> "SktimeModel":
+        r"""Fit the model.
+
+        Args:
+            y (numpy.array): Clean time series of shape (t,).
+            X (array-like, optional): Exogenous of shape (t, n_x).
+
+        Returns:
+            SktimeModel: Fitted SktimeModel object.
+        """
+        y = _ensure_float(y)
+        self.model_ = {}
+        f, y_series, X_fit = self._fit(y, X)
+        self.model_["forecaster"] = f
+        self.model_["y_series"] = y_series
+        self.model_["X_fit"] = X_fit
+        try:
+            residuals = f.predict_residuals(y=y_series, X=X_fit)
+            self.model_["fitted"] = (
+                np.asarray(y_series).ravel() - _sktime_pred_to_numpy(residuals)
+            )
+        except Exception:
+            self.model_["fitted"] = np.full_like(y, np.nan)
+        residuals_num = y - self.model_["fitted"]
+        self.model_["sigma"] = _calculate_sigma(residuals_num, y.size)
+        self._store_cs(y=y, X=X)
+        return self
+
+    def predict(
+        self,
+        h: int,
+        X: Optional[np.ndarray] = None,
+        level: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        r"""Predict with fitted SktimeModel.
+
+        Args:
+            h (int): Forecast horizon.
+            X (array-like, optional): Exogenous of shape (h, n_x).
+            level (List[int]): Confidence levels (0-100) for prediction intervals.
+
+        Returns:
+            dict: Dictionary with entries `mean` and optionally `level_*`.
+        """
+        f = self.model_["forecaster"]
+        fh = np.arange(1, int(h) + 1, dtype=int)
+        X_pred = _sktime_X_to_df(X, index=fh) if X is not None and X.size > 0 else None
+        y_pred = f.predict(fh=fh, X=X_pred)
+        res = {"mean": _sktime_pred_to_numpy(y_pred)}
+        if level is None:
+            return res
+        level = sorted(level)
+        if self.prediction_intervals is not None:
+            res = self._add_predict_conformal_intervals(res, level)
+        else:
+            raise Exception(
+                "You must pass prediction_intervals to compute prediction intervals."
+            )
+        return res
+
+    def predict_in_sample(self, level: Optional[List[int]] = None) -> Dict[str, Any]:
+        r"""In-sample predictions from the fitted SktimeModel."""
+        res = {"fitted": self.model_["fitted"]}
+        if level is not None:
+            level = sorted(level)
+            res = _add_fitted_pi(res=res, se=self.model_["sigma"], level=level)
+        return res
+
+    def forecast(
+        self,
+        y: np.ndarray,
+        h: int,
+        X: Optional[np.ndarray] = None,
+        X_future: Optional[np.ndarray] = None,
+        level: Optional[List[int]] = None,
+        fitted: bool = False,
+    ) -> Dict[str, Any]:
+        r"""Memory-efficient SktimeModel predictions (fit and predict without storing)."""
+        y = _ensure_float(y)
+        f, y_series, X_fit = self._fit(y, X)
+        fh = np.arange(1, int(h) + 1, dtype=int)
+        X_pred = (
+            _sktime_X_to_df(X_future, index=fh)
+            if X_future is not None and X_future.size > 0
+            else None
+        )
+        res = {"mean": _sktime_pred_to_numpy(f.predict(fh=fh, X=X_pred))}
+        if fitted:
+            try:
+                res["fitted"] = (
+                    np.asarray(y_series).ravel()
+                    - _sktime_pred_to_numpy(f.predict_residuals(y=y_series, X=X_fit))
+                )
+            except Exception:
+                res["fitted"] = np.full_like(y, np.nan)
+        if level is not None:
+            level = sorted(level)
+            if self.prediction_intervals is not None:
+                res = self._add_conformal_intervals(fcst=res, y=y, X=X, level=level)
+            else:
+                raise Exception(
+                    "You must pass prediction_intervals to compute intervals."
+                )
+            if fitted:
+                residuals = y - res["fitted"]
+                res = _add_fitted_pi(
+                    res=res, se=_calculate_sigma(residuals, y.size), level=level
+                )
+        return res
+
+    def forward(
+        self,
+        y: np.ndarray,
+        h: int,
+        X: Optional[np.ndarray] = None,
+        X_future: Optional[np.ndarray] = None,
+        level: Optional[List[int]] = None,
+        fitted: bool = False,
+    ) -> Dict[str, Any]:
+        r"""Apply fitted SktimeModel to new/updated time series."""
+        if not hasattr(self, "model_"):
+            raise Exception("You have to use the fit method first")
+        f = self.model_["forecaster"]
+        fh = np.arange(1, int(h) + 1, dtype=int)
+        X_pred = (
+            _sktime_X_to_df(X_future, index=fh)
+            if X_future is not None and X_future.size > 0
+            else None
+        )
+        res = {"mean": _sktime_pred_to_numpy(f.predict(fh=fh, X=X_pred))}
+        if fitted:
+            res["fitted"] = self.model_["fitted"]
+        if level is not None:
+            level = sorted(level)
+            if self.prediction_intervals is not None:
+                res = self._add_conformal_intervals(fcst=res, y=y, X=X, level=level)
+            else:
+                raise Exception(
+                    "You must pass prediction_intervals to compute intervals."
+                )
+            if fitted:
+                res = _add_fitted_pi(
+                    res=res, se=self.model_["sigma"], level=level
+                )
         return res
 
 
