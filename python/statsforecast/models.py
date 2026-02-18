@@ -6666,8 +6666,24 @@ class SktimeModel(_TS):
             dict: Dictionary with entries `mean` and optionally `level_*`.
         """
         f = self.model_["forecaster"]
-        fh = np.arange(1, int(h) + 1, dtype=int)
-        X_pred = _sktime_X_to_df(X, index=fh) if X is not None and X.size > 0 else None
+        h_int = int(h)
+        use_X = X is not None and X.size > 0
+        if use_X:
+            cutoff = getattr(f, "cutoff", None)
+            if cutoff is None:
+                n = len(self.model_.get("y_series", []))
+                cutoff = n - 1 if n else 0
+            elif hasattr(cutoff, "item"):
+                cutoff = int(cutoff.item())
+            elif hasattr(cutoff, "__len__") and len(cutoff) > 0:
+                cutoff = int(cutoff[-1])
+            else:
+                cutoff = int(cutoff)
+            fh = np.arange(cutoff + 1, cutoff + h_int + 1, dtype=int)
+            X_pred = _sktime_X_to_df(X, index=fh)
+        else:
+            fh = np.arange(1, h_int + 1, dtype=int)
+            X_pred = None
         y_pred = f.predict(fh=fh, X=X_pred)
         res = {"mean": _sktime_pred_to_numpy(y_pred)}
         if level is None:
@@ -6701,12 +6717,15 @@ class SktimeModel(_TS):
         r"""Memory-efficient SktimeModel predictions (fit and predict without storing)."""
         y = _ensure_float(y)
         f, y_series, X_fit = self._fit(y, X)
-        fh = np.arange(1, int(h) + 1, dtype=int)
-        X_pred = (
-            _sktime_X_to_df(X_future, index=fh)
-            if X_future is not None and X_future.size > 0
-            else None
-        )
+        h_int = int(h)
+        use_X_future = X_future is not None and X_future.size > 0
+        if use_X_future:
+            cutoff = len(y) - 1
+            fh = np.arange(cutoff + 1, cutoff + h_int + 1, dtype=int)
+            X_pred = _sktime_X_to_df(X_future, index=fh)
+        else:
+            fh = np.arange(1, h_int + 1, dtype=int)
+            X_pred = None
         res = {"mean": _sktime_pred_to_numpy(f.predict(fh=fh, X=X_pred))}
         if fitted:
             try:
@@ -6744,12 +6763,24 @@ class SktimeModel(_TS):
         if not hasattr(self, "model_"):
             raise Exception("You have to use the fit method first")
         f = self.model_["forecaster"]
-        fh = np.arange(1, int(h) + 1, dtype=int)
-        X_pred = (
-            _sktime_X_to_df(X_future, index=fh)
-            if X_future is not None and X_future.size > 0
-            else None
-        )
+        h_int = int(h)
+        use_X_future = X_future is not None and X_future.size > 0
+        if use_X_future:
+            cutoff = getattr(f, "cutoff", None)
+            if cutoff is None:
+                n = len(self.model_.get("y_series", []))
+                cutoff = n - 1 if n else 0
+            elif hasattr(cutoff, "item"):
+                cutoff = int(cutoff.item())
+            elif hasattr(cutoff, "__len__") and len(cutoff) > 0:
+                cutoff = int(cutoff[-1])
+            else:
+                cutoff = int(cutoff)
+            fh = np.arange(cutoff + 1, cutoff + h_int + 1, dtype=int)
+            X_pred = _sktime_X_to_df(X_future, index=fh)
+        else:
+            fh = np.arange(1, h_int + 1, dtype=int)
+            X_pred = None
         res = {"mean": _sktime_pred_to_numpy(f.predict(fh=fh, X=X_pred))}
         if fitted:
             res["fitted"] = self.model_["fitted"]

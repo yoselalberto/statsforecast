@@ -1844,6 +1844,31 @@ class TestSktimeModel:
         with pytest.raises(TypeError, match="forecaster must be an sktime"):
             SktimeModel("not a forecaster")
 
+    def test_sktime_model_forecaster_not_in_statsforecast(self):
+        """Use a sktime forecaster that has no direct equivalent in statsforecast."""
+        from sktime.forecasting.trend import PolynomialTrendForecaster
+
+        model = SktimeModel(PolynomialTrendForecaster(degree=2))
+        assert_class(model, x=ap, h=self.h, skip_insample=False)
+
+    def test_sktime_model_with_exogenous(self):
+        """SktimeModel with a forecaster that uses exogenous regressors (X)."""
+        from sklearn.linear_model import Ridge
+        from sktime.forecasting.compose import YfromX
+
+        X = np.arange(ap.size, dtype=float).reshape(-1, 1)
+        X_future = (ap.size + np.arange(self.h, dtype=float)).reshape(-1, 1)
+        model = SktimeModel(YfromX(Ridge()))
+        assert_class(
+            model,
+            x=ap,
+            X=X,
+            X_future=X_future,
+            h=self.h,
+            skip_insample=True,
+            test_forward=True,
+        )
+
 
 class TestConstantModel:
     def test_constant_model_basic(self):
