@@ -6609,7 +6609,7 @@ class SktimeModel(_TS):
 
     def _fit(self, y: np.ndarray, X: Optional[np.ndarray] = None):
         """Fit the cloned forecaster; returns (forecaster, y_series, X_fit)."""
-        from sktime.base import clone
+        from sklearn.base import clone
 
         y_series = _sktime_forecaster_to_series(y)
         X_fit = _sktime_X_to_df(X, index=y_series.index)
