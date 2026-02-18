@@ -23,7 +23,7 @@ StatsForecast offers a wide variety of statistical forecasting models grouped in
 
 - **ARCH/GARCH Family**: Models for time series exhibiting non-constant volatility over time. Commonly used in finance.
 
-- **Machine Learning**: Wrapper for scikit-learn models to be used with StatsForecast.
+- **Machine Learning**: Wrappers for scikit-learn and sktime forecasters to be used with StatsForecast (SklearnModel, SktimeModel).
 
 ## Automatic Forecasting
 
@@ -469,6 +469,19 @@ StatsForecast offers a wide variety of statistical forecasting models grouped in
 ### SklearnModel
 
 ::: statsforecast.models.SklearnModel
+    options:
+      show_source: true
+      heading_level: 4
+      members:
+        - __init__
+        - fit
+        - predict
+        - predict_in_sample
+        - forecast
+
+### SktimeModel
+
+::: statsforecast.models.SktimeModel
     options:
       show_source: true
       heading_level: 4
