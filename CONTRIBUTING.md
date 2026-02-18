@@ -98,7 +98,7 @@ The new documentation pipeline relies on `quarto`, `mintlify` and `griffe2md`.
 
 ### Install `quarto`
 
-Install `quarto` from &rarr; [this link](https://quarto.org/docs/get-started/)
+Install Quarto **1.8** (or compatible) from &rarr; [this link](https://quarto.org/docs/get-started/). The docs pipeline uses Quarto 1.8; using the same version locally avoids rendering differences.
 
 ### Install mintlify
 
